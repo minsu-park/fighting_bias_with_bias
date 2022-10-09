@@ -1,8 +1,12 @@
 library(data.table)
 library(dplyr)
-###Initial datasets
+library(zoo)
+
+# DATA PREPARATION --------------------------------------------------------
+### INITIAL REVIEW DATA ###
 setwd(dirname(rstudioapi::getActiveDocumentContext()$path))
 rws=fread("../data/rws.all.csv") 
+
 colnames(rws)
 rws %>% summarise(host.cnt=n_distinct(host_id),
                   guest.cnt=n_distinct(guest_id),
@@ -14,7 +18,9 @@ rws %>% group_by(instant_bookable) %>%
             rws.cnt=n_distinct(id),
             guest.cnt=n_distinct(guest_id))
 
-###rws to merge with guest/host racial identities
+
+
+### MERGE GUEST/HOST RACIAL IDENTITY WITH REVIEWS ###
 guest=fread("../data/guest.attribute.csv")
 colnames(guest)[c(5,8)]=c("g.num_face","g.ethnicity")
 guest=guest[,c("guest_id","g.num_face","g.ethnicity")]
@@ -37,42 +43,46 @@ rws.gh.t=rws.gh.t[rws.gh.t$h.ethnicity!="",]
 
 host.ins=rws.gh.t[!duplicated(rws.gh.t$host_id),]
 
-##Merge with listing vars
+
+
+### MERGE WITH LISTING VARS ###
 rws.gh.t$listing_id=as.character(rws.gh.t$listing_id)
+
 ls=fread("../data/ls.with.rws.csv")
 ls=ls[,c("listing_id","price","review_scores_rating",
          "room_type")]
 ls$listing_id=as.character(ls$listing_id)
 ls$price=as.numeric(gsub('[$,]', '', ls$price))
+
 rws.gh.t=left_join(rws.gh.t,ls, by="listing_id")
 n=which(colnames(rws.gh.t)=="review_scores_rating")
 colnames(rws.gh.t)[n]="rating"
-###Done with data compilation
-####Do the most recent 6 computation
 
+
+
+### LABEL FRONT-PAGE REVIEWS (THE MOST RECENT SIX REVIEWS) ###
 df=rws.gh.t
-##Whether to include negative endorsement? Should decide here
-library(dplyr)
-colnames(df)
-##1.count total number of reviews -1, lag g.ethnicity by 1 
-## to prepare for calculating the most recent 6 endorsement
+
+### 1 ### Count total number of reviews -1, lag g.ethnicity by 1 to 
+###   ### prepare for calculating the most recent 6 endorsement!
 df = df %>% group_by(listing_id) %>% arrange(date) %>%
   dplyr::mutate(cum.cnt=row_number()-1,
-         rws.race=lag(g.ethnicity, n = 1, default = NA))
+         rws.race=lag(g.ethnicity, n=1, default=NA))
 
 df$rws.race[which(is.na(df$rws.race))]=0
 
-#1. count the guest race of each row
+## 1-1 ## Count the guest race of each row
 df$g.W.cnt=ifelse(df$rws.race=="WHITE", 1, 0)
 df$g.B.cnt=ifelse(df$rws.race=="BLACK", 1, 0)
 df$g.A.cnt=ifelse(df$rws.race=="ASIAN", 1, 0)
-#2. roll sum the most recent 6 guests by date
-library(zoo)
+
+## 1-2 ## Roll sum the most recent 6 guests by date
 df=df %>% group_by(listing_id) %>%arrange(date) %>%
   dplyr::mutate(top6.W=rollsumr(g.W.cnt==1, 6, fill = NA),
          top6.B=rollsumr(g.B.cnt==1, 6, fill = NA),
          top6.A=rollsumr(g.A.cnt==1, 6, fill = NA))
-#3. for NA values that are 1st - 5th rows, use regular cum.cnt
+
+## 1-3 ## For NA values that are 1st - 5th rows, use regular cum.cnt
 df.na=df[which(is.na(df$top6.W)|is.na(df$top6.B)|is.na(df$top6.A)),]
 df.na$g.W.cnt[which(is.na(df.na$g.W.cnt))]=0
 df.na$g.A.cnt[which(is.na(df.na$g.A.cnt))]=0
@@ -82,13 +92,16 @@ df.na = df.na %>% group_by(listing_id) %>% arrange(date) %>%
   dplyr::mutate(top6.W=cumsum(g.W.cnt==1),
          top6.B=cumsum(g.B.cnt==1),
          top6.A=cumsum(g.A.cnt==1))
+
 df2=df[which(!is.na(df$top6.W)&!is.na(df$top6.B)&!is.na(df$top6.A)),]
-#4. rbind two datasets
+
+## 1-4 ## rbind df and df2
 df=rbind(df2,df.na)
 df=df %>% group_by(listing_id) %>% arrange(date)
 
-##compute the overall sre by proportion
-#calculate the cumulative count of each race
+
+
+### COMPUTE THE OVERALL SRE BY PROPORTION ###
 df = df %>% group_by(listing_id) %>% arrange(date) %>%
   dplyr::mutate(g.W.cnt=cumsum(rws.race=="WHITE"),
          g.B.cnt=cumsum(rws.race=="BLACK"),
@@ -101,25 +114,27 @@ df$prop.W[which(df$prop.W=="NaN")]=0
 df$prop.B[which(df$prop.B=="NaN")]=0
 df$prop.A[which(df$prop.A=="NaN")]=0
 
-###Adding zip code level racial composition
-##Get the latitude and longitude
 
+
+### ADDING CONTROL VARIABLES ###
+
+### 1 ### Add zip code level racial composition
+
+## 1-1 ## Get the latitude and longitude
 ls=fread("../data/ls.with.rws.csv")
 colnames(ls)
 ls=ls[,c("listing_id","neighbourhood_cleansed","neighbourhood_group_cleansed",
          "zipcode","latitude","longitude")]
-
 colnames(ls)[2:3]=c("neighbourhood","borough")
+
 df$listing_id=as.character(df$listing_id)
 ls$listing_id=as.character(ls$listing_id)
 df=left_join(df, ls, by="listing_id")
 df.withzip=df[df$zipcode!="",]
-
 df.withoutzip=df[df$zipcode=="",]
 df.withoutzip$zipcode=NULL
 
-
-##Load retrieved zip code data
+## 1-2 ## Load retrieved zip code data
 df.zip=fread("../data/zip.retreied.csv")
 df.zip$listing_id=as.character(df.zip$listing_id)
 df.withoutzip=left_join(df.withoutzip, df.zip[,c("listing_id","zipcode")],
@@ -130,7 +145,7 @@ df.zip$zipcode=as.character(df.zip$zipcode)
 df=rbind(df.withzip,df.withoutzip)
 df$zipcode[which(df$zipcode=="11249\n11249")]="11249"
 
-##race data from ACS 2020 5-year average
+## 1-3 ## Add racial composition data from ACS 2020 5-year average
 race=fread("../data/ACSDT5Y2020.B02001_data_with_overlays_2022-03-24T004426.csv")
 # B02001_001E	Estimate!!Total
 # B02001_002E	Estimate!!Total:!!White alone
@@ -153,15 +168,18 @@ race$asian.pct=race$asian/race$total
 race$zipcode=as.character(race$zipcode)
 race=race[,c("zipcode","white.pct", "black.pct", "asian.pct")]
 df=dplyr::left_join(df, race, by="zipcode")
-colnames(df)
 
-df$zip.srp=NA ##zip.srp = zip code level same-race proportion
+df$zip.srp=NA #-Note: **zip.srp** represents zip code level same-race proportion.
 df$zip.srp[which(df$g.ethnicity=="ASIAN")]=df$asian.pct[which(df$g.ethnicity=="ASIAN")]
 df$zip.srp[which(df$g.ethnicity=="BLACK")]=df$black.pct[which(df$g.ethnicity=="BLACK")]
 df$zip.srp[which(df$g.ethnicity=="WHITE")]=df$white.pct[which(df$g.ethnicity=="WHITE")]
 
-###Adding Amenity variable
-##There are 23 listings that really do not have amenity information
+
+
+### 2 ### Add amenity variable
+
+## 2-1 ## Read amenities
+#-Note: There are 23 listings that really do not have amenity information.
 amenity=fread("../data/listing.amenitylevel.csv")
 colnames(amenity)
 amt.source <- amenity[,c("listing_id","amenities")] %>% 
@@ -173,7 +191,7 @@ amt.source=amt.source[amt.source$cate!="translation missing: en.hosting_amenity_
 amt.source=unique(amt.source)
 amt.source$cate=trimws(amt.source$cate)
 
-##amenity scores
+## 2-2 ## Match with amenity scores
 wiki.data=fread("../data/wiki_premium.csv")
 nrow(wiki.data)
 
@@ -183,14 +201,18 @@ amt.source=left_join(amt.source, wiki.data, by="cate")
 ls.score=amt.source %>% group_by(listing_id) %>%
   dplyr:: summarise(amenity.sum=sum(Score, na.rm=T),
                     amenity.cnt=n())
+
 hist(ls.score$amenity.sum)
 hist(ls.score$amenity.cnt)
+
 ls.score$listing_id=as.character(ls.score$listing_id)
 colnames(ls.score)
 df=left_join(df, ls.score, by="listing_id")
 colnames(df)
 
-##avg.price, avg.rating
+
+
+### 3 ### Add average price and average rating
 df.m=df[!duplicated(df$listing_id),]
 df.m$avg.price=log(df.m$price+1)
 df.m$avg.rate=log(df.m$rating/20+1)
@@ -198,7 +220,7 @@ df.m$avg.rate=log(df.m$rating/20+1)
 df=left_join(df, df.m[,c("listing_id","avg.price","avg.rate")], 
              by="listing_id")
 
-###Adding gender dummy variable
+### 4 ### Add gender dummy variable
 guest=fread("../data/guest.attribute.csv")
 guest=guest[,c("guest_id","gender")]
 colnames(guest)[2]="g.gender"
@@ -216,7 +238,7 @@ df$gender.binary="0"
 df$gender.binary[which(df$h.gender=="Female")]="1"
 table(df$gender.binary)
 
-###room type binary
+### 5 ### Add room type as a binary variable
 table(df$room_type)
 df$room_type2="0"
 df$room_type2[which(df$room_type!="Shared room")]="1"
@@ -338,10 +360,3 @@ SRE.table=function(SRE.type){
 
 SRE.table("cnt")
 SRE.table("pct")
-
-
-
-
-
-
-
