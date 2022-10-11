@@ -3,6 +3,9 @@
 *.csv
 ./data/*.csv
 
+# R
+.Rhistory
+
 # Jupyter Notebook
 .ipynb_checkpoints
 
