@@ -2,7 +2,7 @@
 
 This repository contains a replication package (i.e., full data and code release) for the paper, entitled **Fighting Bias with Bias: How Same-race Endorsements Reduce Racial Discrimination on Airbnb**.
 
-For more information about the project and findings, please check our paper at **[PUBLICATION PAGE (URL) ON THE JOURNAL WEBSITE]**.
+For more information about the project and findings, please check our paper at **https://www.science.org/doi/10.1126/sciadv.add2315**.
 
 When using any part of the data for a publication or commercial purpose, please cite the source of the data: **[CITATION INFORMATION]**
 
